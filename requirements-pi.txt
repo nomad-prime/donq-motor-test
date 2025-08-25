@@ -1,3 +1,0 @@
-# Requirements for Raspberry Pi deployment
-RPi.GPIO>=0.7.1
-numpy>=2.1.0
