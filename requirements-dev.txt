@@ -1,0 +1,3 @@
+# Requirements for development (Mac/Windows/Linux x86)
+fake-rpi>=0.7.1
+numpy>=2.1.0
