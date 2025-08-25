@@ -1,290 +1,163 @@
 #!/usr/bin/env python3
 """
-TB6612FNG Motor Driver Test Script - Fixed Version
+TB6612FNG Motor Driver Test Script - gpiozero Version
 Tests both motors with forward/backward/stop commands
-Cross-platform compatible with improved error handling
+Compatible with Raspberry Pi 5 using gpiozero library
 """
 
 import time
 import sys
-import platform
-import os
 
-# Platform detection and GPIO import handling
-print('Platform system:', platform.system())
-print('Platform machine:', platform.machine())
-print('Running as user:', os.environ.get('USER', 'unknown'))
+try:
+    from gpiozero import Motor, OutputDevice
+    print("gpiozero imported successfully")
+except ImportError as e:
+    print(f"Failed to import gpiozero: {e}")
+    print("\nInstall with: sudo apt update && sudo apt install python3-gpiozero")
+    print("Or: pip3 install gpiozero")
+    sys.exit(1)
 
-IS_RASPBERRY_PI = False
-GPIO = None
+# Pin definitions for TB6612FNG motor driver
+# Motor A pins (forward, backward)
+MOTOR_A_FORWARD = 24   # AIN1 - GPIO24
+MOTOR_A_BACKWARD = 23  # AIN2 - GPIO23
+MOTOR_A_PWM = 12       # PWMA - GPIO12 (PWM0)
 
-if platform.system() == 'Linux' and ('aarch' in platform.machine() or 'arm' in platform.machine()):
-    # Running on Raspberry Pi or similar ARM board
-    try:
-        import RPi.GPIO as GPIO
-        IS_RASPBERRY_PI = True
-        print("RPi.GPIO imported successfully")
-    except ImportError as e:
-        print(f"Failed to import RPi.GPIO: {e}")
-        print("\nInstall with: sudo apt-get update && sudo apt-get install python3-rpi.gpio")
-        print("Or: pip3 install RPi.GPIO")
-        sys.exit(1)
-else:
-    # Running on development machine (Mac/Windows/Linux x86)
-    try:
-        from fake_rpi.RPi import GPIO
-        print("Running in development mode with fake-rpi")
-    except ImportError:
-        print("Error: fake-rpi not installed. Run: pip install fake-rpi")
-        sys.exit(1)
-
-# Pin definitions - Using hardware PWM capable pins on Pi
-# Motor A pins
-AIN1 = 24   # GPIO24
-AIN2 = 23   # GPIO23
-PWMA = 12   # GPIO12 (PWM0)
-
-# Motor B pins  
-BIN1 = 22   # GPIO22
-BIN2 = 27   # GPIO27
-PWMB = 13   # GPIO13 (PWM1)
+# Motor B pins (forward, backward)
+MOTOR_B_FORWARD = 22   # BIN1 - GPIO22
+MOTOR_B_BACKWARD = 27  # BIN2 - GPIO27
+MOTOR_B_PWM = 13       # PWMB - GPIO13 (PWM1)
 
 # Control pin
-STBY = 16   # GPIO16
+STBY_PIN = 16          # STBY - GPIO16
 
-def check_gpio_permissions():
-    """Check if user has GPIO permissions"""
-    if not IS_RASPBERRY_PI:
-        return True
-    
-    # Check if running as root
-    if os.geteuid() == 0:
-        print("Running as root (sudo)")
-        return True
-    
-    # Check if user is in gpio group
-    import grp
-    import pwd
-    try:
-        gpio_gid = grp.getgrnam('gpio').gr_gid
-        user_groups = os.getgroups()
-        if gpio_gid in user_groups:
-            print("User is in gpio group")
-            return True
-        else:
-            username = pwd.getpwuid(os.getuid()).pw_name
-            print(f"User '{username}' is NOT in gpio group")
-            print(f"Add with: sudo usermod -a -G gpio {username}")
-            print("Then logout and login again")
-            return False
-    except:
-        print("Cannot check gpio group membership")
-        return False
+# Initialize motor objects and standby control
+motor_a = None
+motor_b = None
+standby = None
 
-def setup_gpio():
-    """Initialize GPIO pins with better error handling"""
-    pwm_a = None
-    pwm_b = None
+def setup_motors():
+    """Initialize motor objects using gpiozero"""
+    global motor_a, motor_b, standby
     
     try:
-        # Check permissions first
-        if IS_RASPBERRY_PI and not check_gpio_permissions():
-            print("\nWARNING: May not have GPIO permissions!")
+        print("\nInitializing motors with gpiozero...")
         
-        print("\nInitializing GPIO...")
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
+        # Create Motor objects - gpiozero handles PWM automatically
+        # Motor(forward_pin, backward_pin, enable_pin) or Motor(forward_pin, backward_pin)
+        # For TB6612FNG, we'll use the PWM pins as enable pins
+        motor_a = Motor(forward=MOTOR_A_FORWARD, backward=MOTOR_A_BACKWARD, enable=MOTOR_A_PWM)
+        motor_b = Motor(forward=MOTOR_B_FORWARD, backward=MOTOR_B_BACKWARD, enable=MOTOR_B_PWM)
         
-        # Set all pins as outputs one by one for better error tracking
-        pins = {
-            'AIN1': AIN1, 'AIN2': AIN2, 'PWMA': PWMA,
-            'BIN1': BIN1, 'BIN2': BIN2, 'PWMB': PWMB,
-            'STBY': STBY
-        }
+        # Create standby control pin
+        standby = OutputDevice(STBY_PIN, active_high=True, initial_value=False)
         
-        for name, pin in pins.items():
-            try:
-                GPIO.setup(pin, GPIO.OUT)
-                print(f"  {name} (GPIO{pin}) configured")
-            except Exception as e:
-                print(f"  ERROR setting up {name} (GPIO{pin}): {e}")
-                raise
-        
-        # Set up PWM for speed control
-        print("\nSetting up PWM channels...")
-        try:
-            pwm_a = GPIO.PWM(PWMA, 1000)  # 1kHz frequency
-            print("  PWM A initialized")
-        except Exception as e:
-            print(f"  ERROR initializing PWM A: {e}")
-            raise
-        
-        try:
-            pwm_b = GPIO.PWM(PWMB, 1000)  # 1kHz frequency
-            print("  PWM B initialized")
-        except Exception as e:
-            print(f"  ERROR initializing PWM B: {e}")
-            if pwm_a:
-                pwm_a.stop()
-            raise
-        
-        # Start PWM with 0% duty cycle
-        pwm_a.start(0)
-        pwm_b.start(0)
-        print("  PWM channels started")
+        print("  Motor A configured (Forward=GPIO{}, Backward=GPIO{}, Enable=GPIO{})".format(
+            MOTOR_A_FORWARD, MOTOR_A_BACKWARD, MOTOR_A_PWM))
+        print("  Motor B configured (Forward=GPIO{}, Backward=GPIO{}, Enable=GPIO{})".format(
+            MOTOR_B_FORWARD, MOTOR_B_BACKWARD, MOTOR_B_PWM))
+        print("  Standby pin configured (GPIO{})".format(STBY_PIN))
         
         # Enable the motor driver
-        GPIO.output(STBY, GPIO.HIGH)
+        standby.on()
         print("\nMotor driver enabled (STBY=HIGH)")
+        print("Motor setup successful!")
         
-        if not IS_RASPBERRY_PI:
-            print("\nWARNING: Running in simulation mode - no actual GPIO control")
-        else:
-            print("\nGPIO setup successful!")
-        
-        return pwm_a, pwm_b
+        return True
         
     except Exception as e:
-        print(f"\n*** GPIO SETUP FAILED ***")
+        print(f"\n*** MOTOR SETUP FAILED ***")
         print(f"Error: {e}")
-        
-        if IS_RASPBERRY_PI:
-            print("\n=== TROUBLESHOOTING ===")
-            print("1. Check if running with sudo:")
-            print("   sudo python3 motor_test_fixed.py")
-            print("\n2. Check RPi.GPIO installation:")
-            print("   pip3 list | grep RPi.GPIO")
-            print("\n3. Reinstall RPi.GPIO if needed:")
-            print("   sudo apt-get install python3-rpi.gpio")
-            print("\n4. Check GPIO chip access:")
-            print("   ls -l /dev/gpiochip*")
-            print("\n5. For 'Cannot determine SOC' error, try:")
-            print("   sudo apt-get update")
-            print("   sudo apt-get upgrade")
-            print("   sudo rpi-update")
-            
-            # Try to provide more specific help based on error
-            error_str = str(e).lower()
-            if 'cannot determine soc' in error_str:
-                print("\n*** SPECIFIC ERROR: SOC Detection Failed ***")
-                print("This usually means:")
-                print("- RPi.GPIO can't detect your Pi model")
-                print("- /proc/cpuinfo might be missing hardware info")
-                print("- Try using pigpio library instead:")
-                print("  sudo apt-get install python3-pigpio")
-                print("  sudo systemctl start pigpiod")
-        
-        # Clean up any partially initialized resources
-        if pwm_a:
-            try:
-                pwm_a.stop()
-            except:
-                pass
-        if pwm_b:
-            try:
-                pwm_b.stop()
-            except:
-                pass
+        print("\n=== TROUBLESHOOTING ===")
+        print("1. Make sure gpiozero is installed:")
+        print("   sudo apt update && sudo apt install python3-gpiozero")
+        print("\n2. Check wiring connections")
+        print("\n3. Try running with sudo if needed:")
+        print("   sudo python3 motor_test.py")
         
         raise
 
-def motor_a_forward(pwm_a, speed=50):
+def motor_a_forward(speed=50):
     """Move Motor A forward at given speed (0-100)"""
     if speed < 0 or speed > 100:
         print(f"Warning: Speed {speed} out of range, clamping to 0-100")
         speed = max(0, min(100, speed))
     
-    GPIO.output(AIN1, GPIO.HIGH)
-    GPIO.output(AIN2, GPIO.LOW)
-    pwm_a.ChangeDutyCycle(speed)
+    motor_a.forward(speed/100.0)  # gpiozero uses 0.0-1.0 range
     print(f"Motor A: Forward at {speed}% speed")
 
-def motor_a_backward(pwm_a, speed=50):
+def motor_a_backward(speed=50):
     """Move Motor A backward at given speed (0-100)"""
     if speed < 0 or speed > 100:
         print(f"Warning: Speed {speed} out of range, clamping to 0-100")
         speed = max(0, min(100, speed))
     
-    GPIO.output(AIN1, GPIO.LOW)
-    GPIO.output(AIN2, GPIO.HIGH)
-    pwm_a.ChangeDutyCycle(speed)
+    motor_a.backward(speed/100.0)  # gpiozero uses 0.0-1.0 range
     print(f"Motor A: Backward at {speed}% speed")
 
-def motor_a_stop(pwm_a):
+def motor_a_stop():
     """Stop Motor A"""
-    GPIO.output(AIN1, GPIO.LOW)
-    GPIO.output(AIN2, GPIO.LOW)
-    pwm_a.ChangeDutyCycle(0)
+    motor_a.stop()
     print("Motor A: Stopped")
 
-def motor_b_forward(pwm_b, speed=50):
+def motor_b_forward(speed=50):
     """Move Motor B forward at given speed (0-100)"""
     if speed < 0 or speed > 100:
         print(f"Warning: Speed {speed} out of range, clamping to 0-100")
         speed = max(0, min(100, speed))
     
-    GPIO.output(BIN1, GPIO.HIGH)
-    GPIO.output(BIN2, GPIO.LOW)
-    pwm_b.ChangeDutyCycle(speed)
+    motor_b.forward(speed/100.0)  # gpiozero uses 0.0-1.0 range
     print(f"Motor B: Forward at {speed}% speed")
 
-def motor_b_backward(pwm_b, speed=50):
+def motor_b_backward(speed=50):
     """Move Motor B backward at given speed (0-100)"""
     if speed < 0 or speed > 100:
         print(f"Warning: Speed {speed} out of range, clamping to 0-100")
         speed = max(0, min(100, speed))
     
-    GPIO.output(BIN1, GPIO.LOW)
-    GPIO.output(BIN2, GPIO.HIGH)
-    pwm_b.ChangeDutyCycle(speed)
+    motor_b.backward(speed/100.0)  # gpiozero uses 0.0-1.0 range
     print(f"Motor B: Backward at {speed}% speed")
 
-def motor_b_stop(pwm_b):
+def motor_b_stop():
     """Stop Motor B"""
-    GPIO.output(BIN1, GPIO.LOW)
-    GPIO.output(BIN2, GPIO.LOW)
-    pwm_b.ChangeDutyCycle(0)
+    motor_b.stop()
     print("Motor B: Stopped")
 
-def stop_all_motors(pwm_a, pwm_b):
+def stop_all_motors():
     """Stop both motors"""
-    if pwm_a:
-        motor_a_stop(pwm_a)
-    if pwm_b:
-        motor_b_stop(pwm_b)
+    motor_a.stop()
+    motor_b.stop()
 
-def cleanup(pwm_a=None, pwm_b=None):
-    """Clean up GPIO and PWM safely"""
+def cleanup():
+    """Clean up motors and GPIO safely"""
     try:
-        if pwm_a and pwm_b:
-            stop_all_motors(pwm_a, pwm_b)
-        if pwm_a:
-            pwm_a.stop()
-        if pwm_b:
-            pwm_b.stop()
+        stop_all_motors()
         
-        # Try to disable motor driver
-        try:
-            GPIO.output(STBY, GPIO.LOW)
-        except:
-            pass
-        
-        GPIO.cleanup()
-        print("GPIO cleanup complete")
+        # Disable motor driver
+        if standby:
+            standby.off()
+            
+        # Close motor objects (gpiozero handles cleanup automatically)
+        if motor_a:
+            motor_a.close()
+        if motor_b:
+            motor_b.close()
+        if standby:
+            standby.close()
+            
+        print("Motor cleanup complete")
     except Exception as e:
         print(f"Error during cleanup: {e}")
 
 def run_motor_test():
     """Run a comprehensive motor test"""
     print("\n" + "="*50)
-    print("TB6612FNG Motor Test - Automated Mode")
+    print("TB6612FNG Motor Test - Automated Mode (gpiozero)")
     print("="*50)
-    print(f"Platform: {platform.system()} {platform.machine()}")
-    print(f"Running on Raspberry Pi: {IS_RASPBERRY_PI}")
     print("\nPin Configuration:")
-    print(f"Motor A: AIN1=GPIO{AIN1}, AIN2=GPIO{AIN2}, PWMA=GPIO{PWMA}")
-    print(f"Motor B: BIN1=GPIO{BIN1}, BIN2=GPIO{BIN2}, PWMB=GPIO{PWMB}")
-    print(f"STBY=GPIO{STBY}")
+    print(f"Motor A: Forward=GPIO{MOTOR_A_FORWARD}, Backward=GPIO{MOTOR_A_BACKWARD}, PWM=GPIO{MOTOR_A_PWM}")
+    print(f"Motor B: Forward=GPIO{MOTOR_B_FORWARD}, Backward=GPIO{MOTOR_B_BACKWARD}, PWM=GPIO{MOTOR_B_PWM}")
+    print(f"STBY=GPIO{STBY_PIN}")
     print("\n⚠️  Make sure:")
     print("  - STBY is connected to GPIO16")
     print("  - VM is connected to motor power supply (6-12V)")
@@ -292,61 +165,58 @@ def run_motor_test():
     print("  - GND connections are secure")
     print("="*50)
     
-    pwm_a = None
-    pwm_b = None
-    
     try:
         # Setup
-        pwm_a, pwm_b = setup_gpio()
+        setup_motors()
         time.sleep(1)
         
         # Test Motor A
         print("\n=== Testing Motor A ===")
-        motor_a_forward(pwm_a, 30)
+        motor_a_forward(30)
         time.sleep(2)
-        motor_a_stop(pwm_a)
+        motor_a_stop()
         time.sleep(1)
         
-        motor_a_backward(pwm_a, 30)
+        motor_a_backward(30)
         time.sleep(2)
-        motor_a_stop(pwm_a)
+        motor_a_stop()
         time.sleep(1)
         
         # Test Motor B
         print("\n=== Testing Motor B ===")
-        motor_b_forward(pwm_b, 30)
+        motor_b_forward(30)
         time.sleep(2)
-        motor_b_stop(pwm_b)
+        motor_b_stop()
         time.sleep(1)
         
-        motor_b_backward(pwm_b, 30)
+        motor_b_backward(30)
         time.sleep(2)
-        motor_b_stop(pwm_b)
+        motor_b_stop()
         time.sleep(1)
         
         # Test both motors together
         print("\n=== Testing Both Motors ===")
         print("Both forward...")
-        motor_a_forward(pwm_a, 40)
-        motor_b_forward(pwm_b, 40)
+        motor_a_forward(40)
+        motor_b_forward(40)
         time.sleep(2)
         
         print("Both backward...")
-        motor_a_backward(pwm_a, 40)
-        motor_b_backward(pwm_b, 40)
+        motor_a_backward(40)
+        motor_b_backward(40)
         time.sleep(2)
         
         print("Turning left (Motor A back, Motor B forward)...")
-        motor_a_backward(pwm_a, 40)
-        motor_b_forward(pwm_b, 40)
+        motor_a_backward(40)
+        motor_b_forward(40)
         time.sleep(2)
         
         print("Turning right (Motor A forward, Motor B back)...")
-        motor_a_forward(pwm_a, 40)
-        motor_b_backward(pwm_b, 40)
+        motor_a_forward(40)
+        motor_b_backward(40)
         time.sleep(2)
         
-        stop_all_motors(pwm_a, pwm_b)
+        stop_all_motors()
         print("\n✅ Test Complete!")
         
     except KeyboardInterrupt:
@@ -354,12 +224,12 @@ def run_motor_test():
     except Exception as e:
         print(f"\n❌ Error during test: {e}")
     finally:
-        cleanup(pwm_a, pwm_b)
+        cleanup()
 
 def interactive_mode():
     """Interactive motor control"""
     print("\n" + "="*50)
-    print("TB6612FNG Motor Test - Interactive Mode")
+    print("TB6612FNG Motor Test - Interactive Mode (gpiozero)")
     print("="*50)
     print("\nCommands:")
     print("  Motor A: af (forward), ab (backward), as (stop)")
@@ -367,11 +237,8 @@ def interactive_mode():
     print("  Both: stop (stop all), q (quit)")
     print("="*50)
     
-    pwm_a = None
-    pwm_b = None
-    
     try:
-        pwm_a, pwm_b = setup_gpio()
+        setup_motors()
         
         while True:
             cmd = input("\nEnter command: ").lower().strip()
@@ -379,19 +246,19 @@ def interactive_mode():
             if cmd == 'q':
                 break
             elif cmd == 'af':
-                motor_a_forward(pwm_a, 50)
+                motor_a_forward(50)
             elif cmd == 'ab':
-                motor_a_backward(pwm_a, 50)
+                motor_a_backward(50)
             elif cmd == 'as':
-                motor_a_stop(pwm_a)
+                motor_a_stop()
             elif cmd == 'bf':
-                motor_b_forward(pwm_b, 50)
+                motor_b_forward(50)
             elif cmd == 'bb':
-                motor_b_backward(pwm_b, 50)
+                motor_b_backward(50)
             elif cmd == 'bs':
-                motor_b_stop(pwm_b)
+                motor_b_stop()
             elif cmd == 'stop':
-                stop_all_motors(pwm_a, pwm_b)
+                stop_all_motors()
             else:
                 print("Unknown command! Use: af, ab, as, bf, bb, bs, stop, q")
                 
@@ -400,12 +267,15 @@ def interactive_mode():
     except Exception as e:
         print(f"\n❌ Error: {e}")
     finally:
-        cleanup(pwm_a, pwm_b)
+        cleanup()
 
 def diagnostic_mode():
     """Run diagnostic checks without motor control"""
+    import platform
+    import os
+    
     print("\n" + "="*50)
-    print("TB6612FNG Diagnostic Mode")
+    print("TB6612FNG Diagnostic Mode (gpiozero)")
     print("="*50)
     
     print("\n1. System Information:")
@@ -416,44 +286,45 @@ def diagnostic_mode():
     print(f"   Is root: {os.geteuid() == 0}")
     
     print("\n2. GPIO Library:")
-    if GPIO:
-        print(f"   Module: {GPIO.__name__}")
-        if hasattr(GPIO, 'VERSION'):
-            print(f"   Version: {GPIO.VERSION}")
-        print(f"   Is Raspberry Pi: {IS_RASPBERRY_PI}")
-    else:
-        print("   ERROR: GPIO module not loaded")
+    try:
+        from gpiozero import Device
+        print("   gpiozero library: Available")
+        print(f"   Pin factory: {Device.pin_factory.__class__.__name__}")
+    except ImportError:
+        print("   ERROR: gpiozero not available")
+    except Exception as e:
+        print(f"   ERROR: {e}")
     
-    if IS_RASPBERRY_PI:
-        print("\n3. Checking /proc/cpuinfo:")
-        try:
-            with open('/proc/cpuinfo', 'r') as f:
-                for line in f:
-                    if 'Hardware' in line or 'Revision' in line:
-                        print(f"   {line.strip()}")
-        except:
-            print("   ERROR: Cannot read /proc/cpuinfo")
-        
-        print("\n4. Checking GPIO access:")
-        for dev in ['/dev/gpiochip0', '/dev/gpiochip1', '/dev/gpiomem']:
-            if os.path.exists(dev):
-                try:
-                    stat = os.stat(dev)
-                    print(f"   {dev}: exists (mode: {oct(stat.st_mode)})")
-                except:
-                    print(f"   {dev}: exists but cannot stat")
-            else:
-                print(f"   {dev}: not found")
-        
-        print("\n5. Testing basic GPIO setup (no motors):")
-        try:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(STBY, GPIO.OUT)
-            GPIO.output(STBY, GPIO.LOW)
-            print("   ✅ Basic GPIO control works")
-            GPIO.cleanup()
-        except Exception as e:
-            print(f"   ❌ GPIO control failed: {e}")
+    print("\n3. Checking /proc/cpuinfo:")
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            for line in f:
+                if 'Hardware' in line or 'Revision' in line or 'Model' in line:
+                    print(f"   {line.strip()}")
+    except:
+        print("   ERROR: Cannot read /proc/cpuinfo")
+    
+    print("\n4. Checking GPIO access:")
+    for dev in ['/dev/gpiochip0', '/dev/gpiochip1', '/dev/gpiomem']:
+        if os.path.exists(dev):
+            try:
+                stat = os.stat(dev)
+                print(f"   {dev}: exists (mode: {oct(stat.st_mode)})")
+            except:
+                print(f"   {dev}: exists but cannot stat")
+        else:
+            print(f"   {dev}: not found")
+    
+    print("\n5. Testing basic pin setup (no motors):")
+    try:
+        from gpiozero import LED
+        test_pin = LED(STBY_PIN)
+        test_pin.off()
+        test_pin.close()
+        print("   ✅ Basic pin control works")
+    except Exception as e:
+        print(f"   ❌ Pin control failed: {e}")
+        print("   Try: sudo apt update && sudo apt install python3-gpiozero")
 
 if __name__ == "__main__":
     print("TB6612FNG Motor Test Script")
