@@ -15,12 +15,12 @@ Updated to use hardware PWM-capable pins:
 
 | Function | GPIO Pin | Notes |
 |----------|----------|-------|
-| AIN1 | GPIO 17 | Motor A direction 1 |
-| AIN2 | GPIO 27 | Motor A direction 2 |
-| PWMA | GPIO 18 | Motor A speed (HW PWM) |
-| BIN1 | GPIO 23 | Motor B direction 1 |
-| BIN2 | GPIO 24 | Motor B direction 2 |
-| PWMB | GPIO 19 | Motor B speed (HW PWM) |
+| AIN1 | GPIO 24 | Motor A direction 1 |
+| AIN2 | GPIO 23 | Motor A direction 2 |
+| PWMA | GPIO 12 | Motor A speed (HW PWM) |
+| BIN1 | GPIO 22 | Motor B direction 1 |
+| BIN2 | GPIO 27 | Motor B direction 2 |
+| PWMB | GPIO 13 | Motor B speed (HW PWM) |
 | STBY | GPIO 16 | Standby (must be HIGH to enable) |
 
 ## Installation
