@@ -10,7 +10,9 @@ import sys
 import platform
 
 # Platform detection and GPIO import handling
-if platform.system() == 'Linux' and 'arm' in platform.machine():
+print('platform system: ', platform.system())
+print('platform machine: ', platform.machine())
+if platform.system() == 'Linux' and 'aarch64' in platform.machine():
     # Running on Raspberry Pi
     import RPi.GPIO as GPIO
     IS_RASPBERRY_PI = True
